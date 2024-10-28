@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Equity Curve Simulator V2</title>
+    <style>
+        :root {
+            --primary-color: #2563eb;
+            --secondary-color: #475569;
+            --background-color: #f8fafc;
+            --border-color: #e2e8f0;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: var(--background-color);
+            margin: 0;
+            padding: 20px;
+            line-height: 1.5;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .controls, .results {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: var(--secondary-color);
+            font-weight: 500;
+        }
+
+        input[type="number"],
+        select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+
+        button {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: background-color 0.2s;
+            width: 100%;
+            margin-bottom: 10px;
+        }
+
+        button:hover {
+            background-color: #1d4ed8;
+        }
+
+        .stats-container, .table-container {
+            margin-top: 20px;
+        }
+
+        .stat-card, table {
+            width: 100%;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            display: inline-block;
+            text-align: center;
+            padding: 15px;
+            background: var(--background-color);
+            border-radius: 6px;
+            font-weight: bold;
+            font-size: 1.5rem;
+            color: var(--primary-color);
+        }
+
+        .table-container {
+            overflow-x: auto;
+        }
+
+        table, th, td {
+            border: 1px solid var(--border-color);
+            border-collapse: collapse;
+            padding: 8px;
+            text-align: left;
+        }
+
+        th {
+            background-color: var(--background-color);
+        }
+    </style>
+    <!-- Include Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Include SheetJS (xlsx) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.3/xlsx.full.min.js"></script>
+    <!-- Include jsPDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <div class="controls">
+            <h2>Simulation Parameters</h2>
+            <div class="form-group">
+                <label for="startingEquity">Starting Equity</label>
+                <input type="number" id="startingEquity" value="1000000" min="1" />
+            </div>
+            <div class="form-group">
+                <label for="numTrades">Number of Trades</label>
+                <input type="number" id="numTrades" value="100" min="1" max="1000000" />
+            </div>
+            <div class="form-group">
+                <label for="numSimulations">Number of Simulations</label>
+                <input type="number" id="numSimulations" value="5" min="1" max="1000000" />
+            </div>
+            <div class="form-group">
+                <label for="winRate">Win Rate (%)</label>
+                <input type="number" id="winRate" value="50" min="0" max="100" />
+            </div>
+            <div class="form-group">
+                <label for="rewardRisk">Reward to Risk Ratio</label>
+                <input type="number" id="rewardRisk" value="2" min="0.1" step="0.1" />
+            </div>
+            <div class="form-group">
+                <label for="riskType">Risk Type</label>
+                <select id="riskType">
+                    <option value="fixed">Fixed Risk</option>
+                    <option value="percent">Percentage Risk</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="riskSize">Risk Size (%)</label>
+                <input type="number" id="riskSize" value="1" min="0.1" max="100" step="0.1" />
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="useMartingale" />
+                    Use Martingale Strategy
+                </label>
+            </div>
+            <div class="form-group">
+                <label for="martingaleMultiplier">Martingale Multiplier</label>
+                <input type="number" id="martingaleMultiplier" value="2" min="1" step="0.1" />
+            </div>
+            <div class="form-group">
+                <label for="martingaleReset">Martingale Reset (trades)</label>
+                <input type="number" id="martingaleReset" value="2" min="1" />
+            </div>
+            <button onclick="runSimulation()">Run Simulation</button>
+            <button onclick="exportToPDF()">Export to PDF</button>
+            <button onclick="exportToExcel()">Export to Excel</button>
+        </div>
+
+        <div class="results">
+            <canvas id="equityChart" style="width:100%; height:400px;"></canvas>
+            <div class="stats-container" id="statsContainer"></div>
+            <div class="table-container" id="tableContainer"></div>
+        </div>
+    </div>
+
+    <script>
+        let simulationData = [];
+        let myChart;
+
+        function runSimulation() {
+            const params = getParams();
+            if (!params) return;
+
+            simulationData = generateSimulations(params);
+            renderChart(simulationData);
+            displayStats(simulationData);
+            renderTable(simulationData);
+        }
+
+        function getParams() {
+            return {
+                startingEquity: parseFloat(document.getElementById('startingEquity').value),
+                numTrades: parseInt(document.getElementById('numTrades').value),
+                numSimulations: parseInt(document.getElementById('numSimulations').value),
+                winRate: parseFloat(document.getElementById('winRate').value) / 100,
+                rewardRisk: parseFloat(document.getElementById('rewardRisk').value),
+                riskType: document.getElementById('riskType').value,
+                riskSize: parseFloat(document.getElementById('riskSize').value) / 100,
+                useMartingale: document.getElementById('useMartingale').checked,
+                martingaleMultiplier: parseFloat(document.getElementById('martingaleMultiplier').value),
+                martingaleReset: parseInt(document.getElementById('martingaleReset').value)
+            };
+        }
+
+        function generateSimulations(params) {
+    const results = [];
+    for (let sim = 0; sim < params.numSimulations; sim++) {
+        let equity = params.startingEquity;
+        const trades = [equity];
+        let consecutiveLosses = 0;
+        let currentRisk = params.riskType === 'fixed' ? params.riskSize * params.startingEquity : params.riskSize * equity;
+
+        for (let trade = 0; trade < params.numTrades; trade++) {
+            const outcome = Math.random() < params.winRate ? currentRisk * params.rewardRisk : -currentRisk;
+
+            equity = Math.max(0, equity + outcome);
+            trades.push(equity);
+
+            // Check if the trade resulted in a loss or win
+            if (outcome < 0) {
+                consecutiveLosses++;
+                // Apply Martingale if the user enabled it
+                if (params.useMartingale) {
+                    currentRisk *= params.martingaleMultiplier; // Increase risk
+                }
+            } else {
+                // Reset the risk after a win
+                consecutiveLosses = 0;
+                currentRisk = params.riskType === 'fixed' ? params.riskSize * params.startingEquity : params.riskSize * equity;
+            }
+
+            // Reset currentRisk after martingale limit if needed
+            if (consecutiveLosses >= params.martingaleReset) {
+                currentRisk = params.riskType === 'fixed' ? params.riskSize * params.startingEquity : params.riskSize * equity; // Reset to initial risk
+            }
+        }
+        results.push(trades);
+    }
+    return results;
+}
+
+        function renderChart(data) {
+            const ctx = document.getElementById('equityChart').getContext('2d');
+            const datasets = data.map((trades, index) => ({
+                label: `Simulation ${index + 1}`,
+                data: trades,
+                borderColor: `rgba(${Math.floor(Math.random() * 255)}, ${Math.floor(Math.random() * 255)}, ${Math.floor(Math.random() * 255)}, 1)`,
+                fill: false,
+            }));
+
+            if (myChart) myChart.destroy(); // Destroy existing chart instance if exists
+
+            myChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: Array.from({ length: data[0].length }, (_, i) => i + 1),
+                    datasets: datasets,
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'Equity'
+                            }
+                        },
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Trades'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function displayStats(data) {
+            const statsContainer = document.getElementById('statsContainer');
+            statsContainer.innerHTML = ''; // Clear previous stats
+
+            const averages = calculateAverages(data);
+            const statKeys = Object.keys(averages);
+            statKeys.forEach(key => {
+                const statCard = document.createElement('div');
+                statCard.className = 'stat-card';
+                statCard.innerHTML = `${key}: ${averages[key].toFixed(2)}`;
+                statsContainer.appendChild(statCard);
+            });
+        }
+
+        function calculateAverages(data) {
+            const totalResults = data.length;
+            const averages = {
+                'Average Ending Equity': 0,
+                'Average Drawdown': 0
+            };
+
+            data.forEach(trades => {
+                averages['Average Ending Equity'] += trades[trades.length - 1];
+                averages['Average Drawdown'] += Math.max(...trades) - trades[trades.length - 1];
+            });
+
+            averages['Average Ending Equity'] /= totalResults;
+            averages['Average Drawdown'] /= totalResults;
+
+            return averages;
+        }
+
+        function renderTable(data) {
+            const tableContainer = document.getElementById('tableContainer');
+            tableContainer.innerHTML = ''; // Clear previous table
+
+            const table = document.createElement('table');
+            const thead = document.createElement('thead');
+            const tbody = document.createElement('tbody');
+
+            const headers = ['Simulation #', 'Ending Equity', 'Drawdown'];
+            const headerRow = document.createElement('tr');
+            headers.forEach(header => {
+                const th = document.createElement('th');
+                th.innerHTML = header;
+                headerRow.appendChild(th);
+            });
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+
+            data.forEach((trades, index) => {
+                const drawdown = Math.max(...trades) - trades[trades.length - 1];
+                const row = document.createElement('tr');
+                row.innerHTML = `<td>${index + 1}</td><td>${trades[trades.length - 1].toFixed(2)}</td><td>${drawdown.toFixed(2)}</td>`;
+                tbody.appendChild(row);
+            });
+            table.appendChild(tbody);
+            tableContainer.appendChild(table);
+        }
+
+        function exportToPDF() {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+            doc.text("Equity Curve Simulation Results", 20, 20);
+            let y = 30;
+
+            // Add metrics
+            const averages = calculateAverages(simulationData);
+            for (const [key, value] of Object.entries(averages)) {
+                doc.text(`${key}: ${value.toFixed(2)}`, 20, y);
+                y += 10;
+            }
+
+            // Add the chart image
+            const canvas = document.getElementById('equityChart');
+            doc.addImage(canvas.toDataURL('image/png'), 'PNG', 20, y, 170, 90);
+            y += 100;
+
+            // Add table data
+            simulationData.forEach((trades, index) => {
+                const drawdown = Math.max(...trades) - trades[trades.length - 1];
+                doc.text(`Simulation ${index + 1} Ending Equity: ${trades[trades.length - 1].toFixed(2)}, Drawdown: ${drawdown.toFixed(2)}`, 20, y);
+                y += 10;
+            });
+
+            doc.save('equity_curve_simulation.pdf');
+        }
+
+        function exportToExcel() {
+            const ws = XLSX.utils.aoa_to_sheet([['Simulation #', 'Ending Equity', 'Drawdown']]);
+            simulationData.forEach((trades, index) => {
+                const drawdown = Math.max(...trades) - trades[trades.length - 1];
+                const row = [index + 1, trades[trades.length - 1].toFixed(2), drawdown.toFixed(2)];
+                XLSX.utils.sheet_add_aoa(ws, [row], { origin: -1 });
+            });
+
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Simulation Results');
+            XLSX.writeFile(wb, 'equity_curve_simulation.xlsx');
+        }
+    </script>
+</body>
+</html>
